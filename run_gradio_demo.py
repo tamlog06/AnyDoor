@@ -14,6 +14,8 @@ from cldm.ddim_hacked import DDIMSampler
 from omegaconf import OmegaConf
 from cldm.hack import disable_verbosity, enable_sliced_attention
 
+from modules.utils import image_grid
+
 
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
@@ -40,7 +42,6 @@ if use_interactive_seg:
     iseg_model = BaselineModel().eval()
     weights = torch.load(model_path , map_location='cpu')['state_dict']
     iseg_model.load_state_dict(weights, strict= True)
-
 
 def process_image_mask(image_np, mask_np):
     if not image_np.flags.writeable:
@@ -81,13 +82,13 @@ def inference_single_image(ref_image,
                            scale, 
                            seed,
                            enable_shape_control,
+                           num_samples,
                            ):
-    raw_background = tar_image.copy()
+    raw_backgrounds = np.array([tar_image.copy() for _ in range(num_samples)])
     item = process_pairs(ref_image, ref_mask, tar_image, tar_mask, enable_shape_control = enable_shape_control)
 
     ref = item['ref']
     hint = item['hint']
-    num_samples = 1
 
     control = torch.from_numpy(hint.copy()).float().cuda() 
     control = torch.stack([control for _ in range(num_samples)], dim=0)
@@ -120,19 +121,20 @@ def inference_single_image(ref_image,
     x_samples = model.decode_first_stage(samples)
     x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy()
 
-    result = x_samples[0][:,:,::-1]
+    result = x_samples[:,:,:,:-1]
     result = np.clip(result,0,255)
 
-    pred = x_samples[0]
-    pred = np.clip(pred,0,255)[1:,:,:]
+    preds = x_samples
+    preds = np.clip(preds,0,255)[:,1:,:,:]
     sizes = item['extra_sizes']
     tar_box_yyxx_crop = item['tar_box_yyxx_crop'] 
-    tar_image = crop_back(pred, tar_image, sizes, tar_box_yyxx_crop) 
+    tar_images = [crop_back(pred, tar_image.copy(), sizes, tar_box_yyxx_crop) for pred in preds]
 
     # keep background unchanged
     y1,y2,x1,x2 = item['tar_box_yyxx']
-    raw_background[y1:y2, x1:x2, :] = tar_image[y1:y2, x1:x2, :]
-    return raw_background
+    for i in range(num_samples):
+        raw_backgrounds[i, y1:y2, x1:x2, :] = tar_images[i][y1:y2, x1:x2, :]
+    return raw_backgrounds
 
 
 def process_pairs(ref_image, ref_mask, tar_image, tar_mask, max_ratio = 0.8, enable_shape_control = False):
@@ -259,9 +261,10 @@ def run_local(base,
         ref_mask = process_image_mask(ref_image, ref_mask)
 
     synthesis = inference_single_image(ref_image.copy(), ref_mask.copy(), image.copy(), mask.copy(), *args)
-    synthesis = torch.from_numpy(synthesis).permute(2, 0, 1)
-    synthesis = synthesis.permute(1, 2, 0).numpy()
-    return [synthesis]
+    synthesis = torch.from_numpy(synthesis).permute(0, 3, 1, 2)
+    synthesis = synthesis.permute(0, 2, 3, 1).numpy()
+    grid_img = image_grid([Image.fromarray(synth) for synth in synthesis])
+    return [grid_img] + [syn for syn in synthesis]
 
 
 
@@ -271,9 +274,9 @@ with gr.Blocks() as demo:
         with gr.Row():
             baseline_gallery = gr.Gallery(label='Output', show_label=True, elem_id="gallery", columns=1, height=768)
             with gr.Accordion("Advanced Option", open=True):
-                num_samples = 1
                 strength = gr.Slider(label="Control Strength", minimum=0.0, maximum=2.0, value=1.0, step=0.01)
                 ddim_steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=30, step=1)
+                num_samples = gr.Slider(label='Number of Samples', minimum=1, maximum=16, value=4, step=1)
                 scale = gr.Slider(label="Guidance Scale", minimum=0.1, maximum=30.0, value=4.5, step=0.1)
                 seed = gr.Slider(label="Seed", minimum=-1, maximum=999999999, step=1, value=-1)
                 reference_mask_refine = gr.Checkbox(label='Reference Mask Refine', value=False, interactive = True)
@@ -309,6 +312,7 @@ with gr.Blocks() as demo:
                                    scale, 
                                    seed,
                                    enable_shape_control, 
+                                   num_samples,
                                    ], 
                            outputs=[baseline_gallery]
                         )
