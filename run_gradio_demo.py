@@ -43,6 +43,8 @@ if use_interactive_seg:
 
 
 def process_image_mask(image_np, mask_np):
+    if not image_np.flags.writeable:
+        image_np = image_np.copy()
     img = torch.from_numpy(image_np.transpose((2, 0, 1)))
     img = img.float().div(255).unsqueeze(0)
     mask = torch.from_numpy(mask_np).float().unsqueeze(0).unsqueeze(0)
