@@ -263,8 +263,9 @@ def run_local(base,
     synthesis = inference_single_image(ref_image.copy(), ref_mask.copy(), image.copy(), mask.copy(), *args)
     synthesis = torch.from_numpy(synthesis).permute(0, 3, 1, 2)
     synthesis = synthesis.permute(0, 2, 3, 1).numpy()
-    grid_img = image_grid([Image.fromarray(synth) for synth in synthesis])
-    return [grid_img] + [syn for syn in synthesis]
+    # grid_img = image_grid([Image.fromarray(synth) for synth in synthesis])
+    # return [grid_img] + [syn for syn in synthesis]
+    return [syn for syn in synthesis]
 
 
 
@@ -293,9 +294,12 @@ with gr.Blocks() as demo:
         gr.Markdown("# Upload / Select Images for the Background (left) and Reference Object (right)")
         gr.Markdown("### You could draw coarse masks on the background to indicate the desired location and shape.")
         gr.Markdown("### <u>Do not forget</u> to annotate the target object on the reference image.")
-        with gr.Row():
+        # with gr.Row():
+        with gr.Column():
             base = gr.Image(label="Background", source="upload", tool="sketch", type="pil", height=512, brush_color='#FF0000', mask_opacity=0.5)
             ref = gr.Image(label="Reference", source="upload", tool="sketch", type="pil", height=512, brush_color='#FF0000', mask_opacity=0.5)
+            # base = gr.Image(label="Background", source="upload", tool="sketch", type="pil", scale=1, brush_color='#FF0000', mask_opacity=0.5)
+            # ref = gr.Image(label="Reference", source="upload", tool="sketch", type="pil", scale=1, brush_color='#FF0000', mask_opacity=0.5)
         run_local_button = gr.Button(label="Generate", value="Run")
 
         with gr.Row():
